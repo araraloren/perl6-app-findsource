@@ -42,14 +42,14 @@ sub main() {
     $os.insert-pos(
         "directory",
         sub find-and-print-source($os, $dira) {
-            my @stack = $dira.value;
+            my @stack = do given $dira.value { .substr(0, $_ ~~ /\/$/ ?? .chars - 1 !! .chars); };
             my (@t1, @t2);
             my %no := ($os<no> // []).SetHash;
-            my ($debug, $ignore-case) = ($os<d>, $os<i>);
+            my ($debug, $only, $ignore-case) = ($os<d>, $os<only>, $os<i>);
 
             @t1 = do {
                 my @t;
-                with $os<only> {
+                with $only {
                     fail "Not recognized category: {$_}." unless $category{$_};
                     @t := $_ eq "w" ?? [] !! ($os{$_} // []);
                 } else {
@@ -61,20 +61,19 @@ sub main() {
                     }
                 }
                 @t = @t>>.lc if $ignore-case;
-                flat( @t Z, (True xx +@t));
+				@t;
             };
             @t2 = do {
                 my @t;
-                @t = ($os.get('only').has-value && $os<only> ne "w") ?? [] !! (
-                    %no<w> ?? [] !! ($os<w> // [])
-                );
+                @t = ($only && $only ne "w") ?? [] !! ( %no<w> ?? [] !! ($os<w> // []) );
                 @t = @t>>.lc if $ignore-case;
-                flat( @t Z, (True xx +@t));
+				@t;
             };
-            my %ext := Map.new(@t1);
-            my %whole := Map.new(@t2);
+            my %ext := @t1.Set;
+            my %whole := @t2.Set;
 
-            note "GET ALL EXT => ", %ext if $debug;
+            note "GET ALL EXT\t=> ", %ext if $debug;
+			note "GET ALL WHOLE\t=> ", %whole if $debug;
 
             my $supplier = Supplier.new;
 
@@ -112,6 +111,48 @@ sub main() {
 
 	$rv.return-value.{ <w a> } = True;
 	$category = $rv.return-value;
+
+	my $config-io = &determind-local-path().add("findsource");
+
+	$os.insert-cmd(
+		"add",
+		sub (@fargs) {
+			for @fargs>>.value -> $file {
+				given $file.IO {
+					when .e {
+						.copy($config-io.add(.basename));
+					}
+					default {
+						die "File {$file} not exists!";
+					}
+				}
+			}
+		}
+	);
+	$os.insert-cmd(
+		"remove",
+		sub (@fargs) {
+			for @fargs>>.value -> $file {
+				given $file.IO {
+					when .e {
+						.unlink;
+					}
+					default {
+						die "Configuration {$file} not exists!";
+					}
+				}
+			}
+		}
+	);
+	$os.insert-cmd(
+		"list",
+		sub (@fargs) {
+			my @configs := $config-io.dir();
+			put "Not configuration file!" if +@configs == 0;
+			.basename.put for @configs;
+		}
+	);
+
     &getopt($rv.noa, [ $os, ]);
 }
 
@@ -135,7 +176,17 @@ sub basename($filepath) {
 
 sub get-sub-files($path) {
     my @ret := [];
-    my $dh := nqp::opendir($path);
+    my $dh;
+
+	try { # catch when open directory failed
+		$dh := nqp::opendir($path);
+		CATCH {
+			default {
+				note "Can not open directory: $path";
+				return @ret;
+			}
+		}
+	}
 
     while (my $f = nqp::nextfiledir($dh)) {
         @ret.push("$path/$f") if $f ne ".." && $f ne ".";

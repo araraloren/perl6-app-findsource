@@ -7,7 +7,7 @@ sub config-loader-parser(@args, $optset, |c) is export {
 	my %configs = shift @args;
 
     loop (my $i = 0;$i < +@args; $i++) {
-        if @args[$i] eq '-l' {
+        if @args[$i] eq '-l' { # only process -l option
             @loadop.push($i);
             @config.push(@args[++$i]);
         } else {
@@ -18,27 +18,27 @@ sub config-loader-parser(@args, $optset, |c) is export {
 	my %category := SetHash.new;
 
     for @config.sort.unique -> $name {
-        my @options := %configs{$name}<option>;
+        if %configs{$name}:exists {
+			for @(%configs{$name}<option>) -> $option {
+				my $short = $option<short>;
 
-        for @options -> $option {
-            my $short = $option<short>;
+				%category{$short} = True;
+				if $optset.has($short) {
+					my $o = $optset.get($short);
+					my @ins := $option<value>;
+					my @old := $o.default-value // [];
 
-            %category{$short} = True;
-            if $optset.has($short) {
-                my $o = $optset.get($short);
-                my @old := $o.default-value // [];
-
-                @old.append($option<value>);
-                @old = @old.sort.unique;
-                $o.set-default-value(@old);
-            } else {
-                $optset.push(
-                    "{$short}| = a",
-                    $option<annotation>,
-                    value => @($option<value>)
-                );
-            }
-        }
+					@old.append(@ins);
+					@old = @old.sort.unique;
+					$o.set-default-value(@old);
+					$o.reset-value;
+				} else {
+					$optset.push( "{$short}| = a", $option<annotation>, value => @($option<value>));
+				}
+			}
+		} else {
+			note "Not recognize config name: $name";
+		}
     }
 
     return Getopt::Advance::ReturnValue.new(
